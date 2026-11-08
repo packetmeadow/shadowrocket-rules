@@ -11,7 +11,7 @@ Merges several public rule sources into one Shadowrocket config:
 
 Dedup: exact dedup, same-policy suffix subsumption, cross-policy
 shadowing (emit order REJECT -> DIRECT -> PROXY), IP-CIDR collapse.
-Our own header always wins: encrypted-DoH-only DNS, IPv6 off,
+Our own header always wins: proxy-routed DNS (8.8.8.8/1.1.1.1), IPv6 off,
 Meta domains pinned to PROXY before everything else.
 
 Usage: aggregate.py SRCDIR OUTPUT
@@ -45,7 +45,7 @@ META_SUFFIXES = [
     "oculus.com",
 ]
 
-DNS_LINE = "dns-server = https://1.1.1.1/dns-query, https://8.8.8.8/dns-query"
+DNS_LINE = "dns-server = 8.8.8.8, 1.1.1.1"
 POLICIES = ("REJECT", "DIRECT", "PROXY")  # emit order = shadowing order
 PRIORITY = {"REJECT": 0, "PROXY": 1, "DIRECT": 2}  # for identical keys
 
@@ -220,7 +220,7 @@ def emit(pools, general, tail, tier="lite"):
     out += [
         "# 多源聚合：zhouzhouprogram + blackmatrix7 + Loyalsoldier，每日自动合并去重",
         f"# {tier_note}",
-        "# DNS 仅加密 DoH（经代理送出），所有域名解析加密，国内外均不经本地明文解析",
+        "# DNS 经代理送往 8.8.8.8 / 1.1.1.1 解析，本地运营商不可见（DoH 方案实测会回落系统解析，已弃用）",
         "# Meta 系域名钉死 PROXY（在 GEOIP,CN 之前）；本文件不含任何节点信息",
         f"# 同步日期：{date.today().isoformat()}",
         "[General]",
