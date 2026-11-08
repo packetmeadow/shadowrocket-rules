@@ -50,15 +50,19 @@ jobs:
             grep -q '^DOMAIN-SUFFIX,instagram.com,PROXY' "$f"
             grep -q 'XPD6FV' "$f"
           done
+          grep -q '^payload:' clash-rules.yaml
+          grep -q 'DOMAIN-SUFFIX,baidu.com,DIRECT' clash-rules.yaml
+          grep -q 'GEOIP,CN,DIRECT' clash-rules.yaml
+          ! grep -q 'FINAL' clash-rules.yaml
 
       - name: Commit if changed
         run: |
-          if git diff --quiet -- shadowrocket-doh.conf shadowrocket-doh-full.conf; then
+          if git diff --quiet -- shadowrocket-doh.conf shadowrocket-doh-full.conf clash-rules.yaml; then
             echo "no changes"
             exit 0
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add shadowrocket-doh.conf shadowrocket-doh-full.conf
+          git add shadowrocket-doh.conf shadowrocket-doh-full.conf clash-rules.yaml
           git commit -m "chore: sync aggregated rules $(date -u +%F)"
           git push
