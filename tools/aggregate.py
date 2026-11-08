@@ -107,8 +107,9 @@ def load_sr(path, pools, raw_url=RAW_URL):
             if ln.startswith("dns-server ="):
                 general.append(DNS_LINE)
                 general.append("ipv6 = false")
-            elif ln.startswith("update-url ="):
                 general.append(f"update-url = {raw_url}")
+            elif ln.startswith("update-url ="):
+                continue  # ours is emitted with the dns-server line above
             elif ln.startswith("ipv6 ="):
                 continue
             elif ln.strip():
@@ -127,6 +128,8 @@ def load_sr(path, pools, raw_url=RAW_URL):
             pools.add(typ, val, policy)
         elif section is not None:
             tail.append(ln)
+    if not any(g.startswith("update-url =") for g in general):
+        general.append(f"update-url = {raw_url}")
     return general, "\n".join(tail).strip("\n")
 
 
