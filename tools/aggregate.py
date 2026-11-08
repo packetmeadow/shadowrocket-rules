@@ -25,7 +25,7 @@ import os
 import sys
 from datetime import date
 
-RAW_BASE = ("https://raw.githubusercontent.com/x950118-maker/"
+RAW_BASE = ("https://raw.githubusercontent.com/packetmeadow/"
             "shadowrocket-rules/main/")
 RAW_URL = RAW_BASE + "shadowrocket-doh.conf"
 RAW_URL_FULL = RAW_BASE + "shadowrocket-doh-full.conf"
