@@ -1,0 +1,52 @@
+name: sync-upstream-rules
+
+# 每天自动把上游最新分流/去广告规则合并进来（套上我们自己的 DNS 头与
+# Meta 钉死段），校验通过且有变化才提交。小火箭订阅本仓库 raw 地址即可跟新。
+on:
+  schedule:
+    - cron: "20 19 * * *"   # 每天 03:20 (Asia/Shanghai)
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sync-upstream-rules
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch upstream rules
+        run: |
+          curl -fsSL --retry 3 -o /tmp/upstream.conf \
+            https://raw.githubusercontent.com/zhouzhouprogram/Shadowrocket-ADBlock-Rules/master/sr_cnip_ad.conf
+          test -s /tmp/upstream.conf
+          grep -q '^\[Rule\]' /tmp/upstream.conf
+          grep -q '^\[General\]' /tmp/upstream.conf
+
+      - name: Merge with our header
+        run: python3 tools/merge.py /tmp/upstream.conf shadowrocket-doh.conf
+
+      - name: Verify merged config (fail = do not commit)
+        run: |
+          grep -q '^dns-server = https://1.1.1.1/dns-query' shadowrocket-doh.conf
+          ! grep -q '114.114.114.114' shadowrocket-doh.conf
+          ! grep -q '112.124.47.27' shadowrocket-doh.conf
+          grep -q '^FINAL,PROXY' shadowrocket-doh.conf
+          grep -q '^DOMAIN-SUFFIX,instagram.com,PROXY' shadowrocket-doh.conf
+
+      - name: Commit if changed
+        run: |
+          if git diff --quiet -- shadowrocket-doh.conf; then
+            echo "no changes"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add shadowrocket-doh.conf
+          git commit -m "chore: sync upstream rules $(date -u +%F)"
+          git push
