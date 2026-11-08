@@ -29,6 +29,25 @@ https://raw.githubusercontent.com/packetmeadow/shadowrocket-rules/main/shadowroc
 
 （条数与体积为 2026-11-08 实测，随上游每日浮动。）
 
+## Clash / Mihomo 用户
+
+规则集（rule-provider，behavior: classical，与精选版同源同序）：
+`https://raw.githubusercontent.com/packetmeadow/shadowrocket-rules/main/clash-rules.yaml`
+
+在自己的配置里挂上即可（节点自备；策略组需有一组名为 PROXY）：
+
+```yaml
+rule-providers:
+  aggregated:
+    type: http
+    behavior: classical
+    url: "https://raw.githubusercontent.com/packetmeadow/shadowrocket-rules/main/clash-rules.yaml"
+    interval: 86400
+rules:
+  - RULE-SET,aggregated,PROXY
+  - MATCH,PROXY
+```
+
 ## 功能
 
 - **分流**：国内直连、国外走代理、局域网直连
