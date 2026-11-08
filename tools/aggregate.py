@@ -63,9 +63,9 @@ class Pools:
         if not value or policy not in POLICIES:
             return
         if typ == "DOMAIN-SUFFIX":
-            self.suffix[policy].add(value.rstrip("."))
+            self.suffix[policy].add(value.lstrip(".").rstrip("."))
         elif typ == "DOMAIN":
-            self.exact[policy].add(value.rstrip("."))
+            self.exact[policy].add(value.lstrip(".").rstrip("."))
         elif typ == "DOMAIN-KEYWORD":
             self.keyword[policy].add(value)
         elif typ in ("IP-CIDR", "IP-CIDR6"):
@@ -107,9 +107,17 @@ def load_sr(path, pools, raw_url=RAW_URL):
             if ln.startswith("dns-server ="):
                 general.append(DNS_LINE)
                 general.append("ipv6 = false")
+                general.append("direct-dns-server = 223.5.5.5, 119.29.29.29")
+                general.append("fallback-dns-server = 1.1.1.1")
+                general.append("dns-direct-system = false")
+                general.append("dns-fallback-system = false")
+                general.append("dns-direct-fallback-proxy = false")
                 general.append(f"update-url = {raw_url}")
-            elif ln.startswith("update-url ="):
-                continue  # ours is emitted with the dns-server line above
+            elif ln.startswith(("update-url =", "direct-dns-server =",
+                                "fallback-dns-server =", "dns-direct-system =",
+                                "dns-fallback-system =",
+                                "dns-direct-fallback-proxy =")):
+                continue  # ours are emitted with the dns-server line above
             elif ln.startswith("ipv6 ="):
                 continue
             elif ln.strip():
@@ -212,41 +220,76 @@ def dedup(pools):
     return stats
 
 
+def _emit_block(out, header, pol, kws, sfxs, exs, nets):
+    out.append(header)
+    for kw in sorted(kws):
+        out.append(f"DOMAIN-KEYWORD,{kw},{pol}")
+    for d in sorted(sfxs):
+        out.append(f"DOMAIN-SUFFIX,{d},{pol}")
+    for d in sorted(exs):
+        out.append(f"DOMAIN,{d},{pol}")
+    for net in nets:
+        typ = "IP-CIDR" if net.version == 4 else "IP-CIDR6"
+        out.append(f"{typ},{net},{pol}")
+
+
 def emit(pools, general, tail, tier="lite"):
     out = list(BANNER)
     tier_note = ("精选版（默认订阅）：多源聚合 + 去重，体积与拦截平衡"
                  if tier == "lite" else
-                 "全量版：精选版 + blackmatrix7 广告域名全集 + Loyalsoldier 直连全集，拦截最全但体积大、更新慢")
+                 "全量版：精选版 + blackmatrix7 广告域名全集，拦截最全但体积大、更新慢")
     out += [
         "# 多源聚合：zhouzhouprogram + blackmatrix7 + Loyalsoldier，每日自动合并去重",
         f"# {tier_note}",
-        "# DNS 经代理送往 8.8.8.8 / 1.1.1.1 解析，本地运营商不可见（DoH 方案实测会回落系统解析，已弃用）",
-        "# Meta 系域名钉死 PROXY（在 GEOIP,CN 之前）；本文件不含任何节点信息",
+        "# DNS 分工：主解析 8.8.8.8/1.1.1.1 经代理送出（运营商不可见）；直连域名走国内解析",
+        "# （direct-dns-server）；系统回退已关闭（dns-fallback-system=false），解析失败也不漏",
+        "# Meta 系域名钉死 PROXY；国内直连域名段与 GEOIP 靠前；本文件不含任何节点信息",
         f"# 同步日期：{date.today().isoformat()}",
         "[General]",
     ]
     out += general
     out += ["", "[Rule]",
-            "# --- Meta 系固定走代理（必须在 GEOIP,CN 之前） ---"]
+            "# --- Meta 系固定走代理 ---"]
     out += [f"DOMAIN-SUFFIX,{d},PROXY" for d in META_SUFFIXES]
-    counts = {}
-    for pol in POLICIES:
-        out.append(f"# --- {pol} ---")
-        for kw in sorted(pools.keyword[pol]):
-            out.append(f"DOMAIN-KEYWORD,{kw},{pol}")
-        for d in sorted(pools.suffix[pol]):
-            out.append(f"DOMAIN-SUFFIX,{d},{pol}")
-        for d in sorted(pools.exact[pol]):
-            out.append(f"DOMAIN,{d},{pol}")
-        for net in pools.ip[pol]:
-            typ = "IP-CIDR" if net.version == 4 else "IP-CIDR6"
-            out.append(f"{typ},{net},{pol}")
-        counts[pol] = (len(pools.keyword[pol]) + len(pools.suffix[pol])
-                       + len(pools.exact[pol]) + len(pools.ip[pol]))
-    out += ["GEOIP,CN,DIRECT", "FINAL,PROXY"]
+    counts = {pol: (len(pools.keyword[pol]) + len(pools.suffix[pol])
+                    + len(pools.exact[pol]) + len(pools.ip[pol]))
+              for pol in POLICIES}
+    # REJECT 里属于直连域名下属的条目（广告/追踪子域名）必须排在直连段之前，
+    # 否则会被父域名的 DIRECT 抢先放行；其余 REJECT 排在 GEOIP 之后。
+    dsfx = pools.suffix["DIRECT"]
+
+    def _under(v):
+        return covered(v, dsfx) or v in pools.exact["DIRECT"]
+
+    early = {
+        "keyword": {k for k in pools.keyword["REJECT"] if _under(k)},
+        "suffix": {d for d in pools.suffix["REJECT"] if _under(d)},
+        "exact": {d for d in pools.exact["REJECT"] if _under(d)},
+    }
+    _emit_block(out, "# --- REJECT（直连域名下属，须在直连段之前） ---",
+                "REJECT", early["keyword"], early["suffix"], early["exact"],
+                pools.ip["REJECT"])
+    _emit_block(out, "# --- DIRECT ---", "DIRECT",
+                pools.keyword["DIRECT"], pools.suffix["DIRECT"],
+                pools.exact["DIRECT"], pools.ip["DIRECT"])
+    out.append("GEOIP,CN,DIRECT")
+    _emit_block(out, "# --- REJECT ---", "REJECT",
+                pools.keyword["REJECT"] - early["keyword"],
+                pools.suffix["REJECT"] - early["suffix"],
+                pools.exact["REJECT"] - early["exact"], [])
+    _emit_block(out, "# --- PROXY ---", "PROXY",
+                pools.keyword["PROXY"], pools.suffix["PROXY"],
+                pools.exact["PROXY"], pools.ip["PROXY"])
+    out.append("FINAL,PROXY")
+    # 结构自检：关键顺序与参数必须成立，否则宁可不产出
+    text = "\n".join(out) + "\n"
+    assert text.index("DOMAIN-SUFFIX,baidu.com,DIRECT") < text.index("GEOIP,CN,DIRECT")
+    assert "direct-dns-server = 223.5.5.5" in text
+    assert "dns-fallback-system = false" in text
+    assert not any(ln.startswith("DOMAIN-SUFFIX,.") for ln in out)
     if tail:
-        out += ["", tail]
-    return "\n".join(out) + "\n", counts
+        text += "\n" + tail + "\n"
+    return text, counts
 
 
 def build(src, tier):
@@ -256,10 +299,10 @@ def build(src, tier):
         "sr.conf": 1000, "bm7-advertising.list": 100,
         "bm7-proxy.list": 50, "bm7-china.list": 20,
         "ls-proxy.txt": 1000, "ls-reject.txt": 1000,
+        "ls-direct.txt": 1000,
     }
     if tier == "full":
         need["bm7-advertising-domain.list"] = 1000
-        need["ls-direct.txt"] = 1000
     for name, min_lines in need.items():
         p = os.path.join(src, name)
         if not os.path.exists(p) or sum(1 for _ in open(p, encoding="utf-8")) < min_lines:
@@ -273,8 +316,7 @@ def build(src, tier):
                  pools, domain_set=True)
     load_bm7(os.path.join(src, "bm7-proxy.list"), "PROXY", pools)
     load_bm7(os.path.join(src, "bm7-china.list"), "DIRECT", pools)
-    if tier == "full":
-        load_loyalsoldier(os.path.join(src, "ls-direct.txt"), "DIRECT", pools)
+    load_loyalsoldier(os.path.join(src, "ls-direct.txt"), "DIRECT", pools)
     load_loyalsoldier(os.path.join(src, "ls-proxy.txt"), "PROXY", pools)
     load_loyalsoldier(os.path.join(src, "ls-reject.txt"), "REJECT", pools)
     stats = dedup(pools)
