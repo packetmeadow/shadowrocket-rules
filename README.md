@@ -15,17 +15,17 @@
 **精选版（推荐，约 22.7 万条 / 9 MB）**：
 
 ```
-https://raw.githubusercontent.com/x950118-maker/shadowrocket-rules/main/shadowrocket-doh.conf
+https://raw.githubusercontent.com/packetmeadow/shadowrocket-rules/main/shadowrocket-doh.conf
 ```
 
 **全量版（约 44 万条 / 17 MB，拦截最全，但导入和更新都慢）**：
 
 ```
-https://raw.githubusercontent.com/x950118-maker/shadowrocket-rules/main/shadowrocket-doh-full.conf
+https://raw.githubusercontent.com/packetmeadow/shadowrocket-rules/main/shadowrocket-doh-full.conf
 ```
 
 一键导入精选版（在装了小火箭的 iPhone 上点）：
-[导入到 Shadowrocket](shadowrocket://install?file=https%3A%2F%2Fraw.githubusercontent.com%2Fx950118-maker%2Fshadowrocket-rules%2Fmain%2Fshadowrocket-doh.conf)
+[导入到 Shadowrocket](shadowrocket://install?file=https%3A%2F%2Fraw.githubusercontent.com%2Fpacketmeadow%2Fshadowrocket-rules%2Fmain%2Fshadowrocket-doh.conf)
 
 （条数与体积为 2026-11-08 实测，随上游每日浮动。）
 
