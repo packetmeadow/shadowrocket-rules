@@ -220,17 +220,16 @@ def dedup(pools):
     return stats
 
 
-def _emit_block(out, header, pol, kws, sfxs, exs, nets):
+def _emit_block(out, header, pol, kws, sfxs, exs, nets, sink=None):
     out.append(header)
-    for kw in sorted(kws):
-        out.append(f"DOMAIN-KEYWORD,{kw},{pol}")
-    for d in sorted(sfxs):
-        out.append(f"DOMAIN-SUFFIX,{d},{pol}")
-    for d in sorted(exs):
-        out.append(f"DOMAIN,{d},{pol}")
-    for net in nets:
-        typ = "IP-CIDR" if net.version == 4 else "IP-CIDR6"
-        out.append(f"{typ},{net},{pol}")
+    lines = ([f"DOMAIN-KEYWORD,{kw},{pol}" for kw in sorted(kws)]
+             + [f"DOMAIN-SUFFIX,{d},{pol}" for d in sorted(sfxs)]
+             + [f"DOMAIN,{d},{pol}" for d in sorted(exs)]
+             + [f"{'IP-CIDR' if net.version == 4 else 'IP-CIDR6'},{net},{pol}"
+                for net in nets])
+    out += lines
+    if sink is not None:
+        sink += lines
 
 
 def emit(pools, general, tail, tier="lite"):
@@ -250,7 +249,9 @@ def emit(pools, general, tail, tier="lite"):
     out += general
     out += ["", "[Rule]",
             "# --- Meta 系固定走代理 ---"]
-    out += [f"DOMAIN-SUFFIX,{d},PROXY" for d in META_SUFFIXES]
+    meta_lines = [f"DOMAIN-SUFFIX,{d},PROXY" for d in META_SUFFIXES]
+    out += meta_lines
+    rl = list(meta_lines)
     counts = {pol: (len(pools.keyword[pol]) + len(pools.suffix[pol])
                     + len(pools.exact[pol]) + len(pools.ip[pol]))
               for pol in POLICIES}
@@ -268,18 +269,19 @@ def emit(pools, general, tail, tier="lite"):
     }
     _emit_block(out, "# --- REJECT（直连域名下属，须在直连段之前） ---",
                 "REJECT", early["keyword"], early["suffix"], early["exact"],
-                pools.ip["REJECT"])
+                pools.ip["REJECT"], sink=rl)
     _emit_block(out, "# --- DIRECT ---", "DIRECT",
                 pools.keyword["DIRECT"], pools.suffix["DIRECT"],
-                pools.exact["DIRECT"], pools.ip["DIRECT"])
+                pools.exact["DIRECT"], pools.ip["DIRECT"], sink=rl)
     out.append("GEOIP,CN,DIRECT")
+    rl.append("GEOIP,CN,DIRECT")
     _emit_block(out, "# --- REJECT ---", "REJECT",
                 pools.keyword["REJECT"] - early["keyword"],
                 pools.suffix["REJECT"] - early["suffix"],
-                pools.exact["REJECT"] - early["exact"], [])
+                pools.exact["REJECT"] - early["exact"], [], sink=rl)
     _emit_block(out, "# --- PROXY ---", "PROXY",
                 pools.keyword["PROXY"], pools.suffix["PROXY"],
-                pools.exact["PROXY"], pools.ip["PROXY"])
+                pools.exact["PROXY"], pools.ip["PROXY"], sink=rl)
     out.append("FINAL,PROXY")
     # 结构自检：关键顺序与参数必须成立，否则宁可不产出
     text = "\n".join(out) + "\n"
@@ -289,7 +291,24 @@ def emit(pools, general, tail, tier="lite"):
     assert not any(ln.startswith("DOMAIN-SUFFIX,.") for ln in out)
     if tail:
         text += "\n" + tail + "\n"
-    return text, counts
+    return text, counts, rl
+
+
+def clash_yaml(rl):
+    """Same ordered rules as the lite SR config, as a mihomo classical
+    rule-provider payload (policies PROXY/DIRECT/REJECT map onto the
+    consuming config's groups/builtins; it supplies MATCH itself)."""
+    assert rl[0].startswith("DOMAIN-SUFFIX,facebook.com,PROXY")
+    assert "GEOIP,CN,DIRECT" in rl
+    assert not any(r.startswith("FINAL") for r in rl)
+    lines = list(BANNER) + [
+        "# Clash / Mihomo 规则集（rule-provider, behavior: classical）",
+        "# 与 Shadowrocket 精选版同源同序，每日自动更新；本文件不含任何节点信息",
+        f"# 同步日期：{date.today().isoformat()}",
+        "payload:",
+    ]
+    lines += [f"  - {r}" for r in rl]
+    return "\n".join(lines) + "\n"
 
 
 def build(src, tier):
@@ -320,24 +339,26 @@ def build(src, tier):
     load_loyalsoldier(os.path.join(src, "ls-proxy.txt"), "PROXY", pools)
     load_loyalsoldier(os.path.join(src, "ls-reject.txt"), "REJECT", pools)
     stats = dedup(pools)
-    text, counts = emit(pools, general, tail, tier)
+    text, counts, rl = emit(pools, general, tail, tier)
     total = sum(counts.values())
     print(f"[{tier}] pools: {counts} total-rules={total} "
           f"bytes={len(text.encode())} dedup={stats} "
           f"dropped-types={pools.dropped_type}")
-    return text
+    return text, rl
 
 
 def main():
     src, outdir = sys.argv[1], sys.argv[2]
     try:
-        lite = build(src, "lite")
-        full = build(src, "full")
+        lite, lite_rl = build(src, "lite")
+        full, _full_rl = build(src, "full")
     except ValueError as e:
         print(f"aborting: {e}", file=sys.stderr)
         return 1
     open(os.path.join(outdir, "shadowrocket-doh.conf"), "w",
          encoding="utf-8").write(lite)
+    open(os.path.join(outdir, "clash-rules.yaml"), "w",
+         encoding="utf-8").write(clash_yaml(lite_rl))
     open(os.path.join(outdir, "shadowrocket-doh-full.conf"), "w",
          encoding="utf-8").write(full)
     return 0
