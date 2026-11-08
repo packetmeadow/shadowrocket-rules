@@ -56,13 +56,15 @@ jobs:
           ! grep -q 'FINAL' clash-rules.yaml
 
       - name: Commit if changed
+        # 先 git add 再看 --cached：普通 git diff 看不见未追踪的新文件，
+        # 2026-11-08 第 7 号运行因此漏提交了全新的 clash-rules.yaml
         run: |
-          if git diff --quiet -- shadowrocket-doh.conf shadowrocket-doh-full.conf clash-rules.yaml; then
+          git add shadowrocket-doh.conf shadowrocket-doh-full.conf clash-rules.yaml
+          if git diff --cached --quiet; then
             echo "no changes"
             exit 0
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add shadowrocket-doh.conf shadowrocket-doh-full.conf clash-rules.yaml
           git commit -m "chore: sync aggregated rules $(date -u +%F)"
           git push
