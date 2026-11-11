@@ -2,7 +2,7 @@ name: sync-upstream-rules
 
 # 每天从多个公开规则源拉取最新版，用 tools/aggregate.py 合并去重成两档
 # （精选版 shadowrocket-doh.conf / 全量版 shadowrocket-doh-full.conf），
-# 套上本仓库固定的 DNS 头（经代理的 8.8.8.8/1.1.1.1）与 Meta 钉死段，校验通过且有变化才提交。
+# 套上本仓库固定的 DNS 头（境外 DoH 经代理 #proxy + 国内 DoH）与 Meta 钉死段，校验通过且有变化才提交。
 on:
   schedule:
     - cron: "20 19 * * *"   # 每天 03:20 (Asia/Shanghai)
@@ -41,8 +41,8 @@ jobs:
       - name: Verify outputs (fail = do not commit)
         run: |
           for f in shadowrocket-doh.conf shadowrocket-doh-full.conf; do
-            grep '^dns-server' "$f" | grep -q '8.8.8.8, 1.1.1.1'
-            grep -q '^direct-dns-server = 223.5.5.5' "$f"
+            grep '^dns-server' "$f" | grep -q 'dns.google/dns-query#proxy'
+            grep -q '^direct-dns-server = https://dns.alidns.com/dns-query' "$f"
             grep -q '^dns-fallback-system = false' "$f"
             grep -q '^DOMAIN-SUFFIX,baidu.com,DIRECT' "$f"
             ! grep '^dns-server' "$f" | grep -qE '114\.114|112\.124'
