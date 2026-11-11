@@ -11,7 +11,8 @@ Merges several public rule sources into one Shadowrocket config:
 
 Dedup: exact dedup, same-policy suffix subsumption, cross-policy
 shadowing (emit order REJECT -> DIRECT -> PROXY), IP-CIDR collapse.
-Our own header always wins: proxy-routed DNS (8.8.8.8/1.1.1.1), IPv6 off,
+Our own header always wins: DoH-only DNS (foreign DoH via #proxy,
+domestic DoH for direct/proxy-server names), IPv6 off,
 Meta domains pinned to PROXY before everything else.
 
 Usage: aggregate.py SRCDIR OUTPUT
@@ -45,7 +46,8 @@ META_SUFFIXES = [
     "oculus.com",
 ]
 
-DNS_LINE = "dns-server = 8.8.8.8, 1.1.1.1"
+DNS_LINE = ("dns-server = https://dns.google/dns-query#proxy, "
+            "https://cloudflare-dns.com/dns-query#proxy")
 POLICIES = ("REJECT", "DIRECT", "PROXY")  # emit order = shadowing order
 PRIORITY = {"REJECT": 0, "PROXY": 1, "DIRECT": 2}  # for identical keys
 
@@ -107,13 +109,15 @@ def load_sr(path, pools, raw_url=RAW_URL):
             if ln.startswith("dns-server ="):
                 general.append(DNS_LINE)
                 general.append("ipv6 = false")
-                general.append("direct-dns-server = 223.5.5.5, 119.29.29.29")
-                general.append("fallback-dns-server = 1.1.1.1")
+                general.append("direct-dns-server = https://dns.alidns.com/dns-query#no-h3, https://doh.pub/dns-query#no-h3")
+                general.append("proxy-dns-server = https://dns.alidns.com/dns-query#no-h3, https://doh.pub/dns-query#no-h3")
+                general.append("fallback-dns-server = https://dns.google/dns-query#proxy, https://cloudflare-dns.com/dns-query#proxy")
                 general.append("dns-direct-system = false")
                 general.append("dns-fallback-system = false")
                 general.append("dns-direct-fallback-proxy = false")
                 general.append(f"update-url = {raw_url}")
             elif ln.startswith(("update-url =", "direct-dns-server =",
+                                "proxy-dns-server =",
                                 "fallback-dns-server =", "dns-direct-system =",
                                 "dns-fallback-system =",
                                 "dns-direct-fallback-proxy =")):
@@ -240,8 +244,8 @@ def emit(pools, general, tail, tier="lite"):
     out += [
         "# 多源聚合：zhouzhouprogram + blackmatrix7 + Loyalsoldier，每日自动合并去重",
         f"# {tier_note}",
-        "# DNS 分工：主解析 8.8.8.8/1.1.1.1 经代理送出（运营商不可见）；直连域名走国内解析",
-        "# （direct-dns-server）；系统回退已关闭（dns-fallback-system=false），解析失败也不漏",
+        "# DNS 分工：主解析境外 DoH（Google/Cloudflare）加 #proxy 经代理送出；直连域名走国内 DoH",
+        "# （阿里/腾讯）；节点域名走 proxy-dns-server 国内 DoH；回退同主解析、不回系统（dns-fallback-system=false）",
         "# Meta 系域名钉死 PROXY；国内直连域名段与 GEOIP 靠前；本文件不含任何节点信息",
         f"# 同步日期：{date.today().isoformat()}",
         "[General]",
@@ -286,7 +290,8 @@ def emit(pools, general, tail, tier="lite"):
     # 结构自检：关键顺序与参数必须成立，否则宁可不产出
     text = "\n".join(out) + "\n"
     assert text.index("DOMAIN-SUFFIX,baidu.com,DIRECT") < text.index("GEOIP,CN,DIRECT")
-    assert "direct-dns-server = 223.5.5.5" in text
+    assert "dns-server = https://dns.google/dns-query#proxy" in text
+    assert "direct-dns-server = https://dns.alidns.com/dns-query" in text
     assert "dns-fallback-system = false" in text
     assert not any(ln.startswith("DOMAIN-SUFFIX,.") for ln in out)
     if tail:
